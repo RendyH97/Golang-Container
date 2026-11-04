@@ -1,0 +1,34 @@
+# Builder Stage
+FROM docker.io/golang:1.27.3-alpine3.24 as builder
+
+# Install file
+RUN apk add -q --no-cache file
+
+# Copy dependency files first for better layer caching
+COPY go.mod go.sum ./
+RUN go mod download && go mod verify
+
+# Copy source code
+COPY . .
+
+RUN CGO_ENABLED=0 GOARCH=amd64 GOOS=linux go build \
+    -ldflags="-s -w" \
+    -o /myapp cmd/main.go \
+    && file /myapp
+
+# Production stage
+FROM alpine:3.24.2
+
+# Install runtime dependencies and create non-root user in single layer
+RUN apk add -q --no-cache tzdata ca-certificates \
+    && addgroup -S nonroot \
+    && adduser -S -D -G nonroot nonroot
+
+# Copy binary from builder stage and set ownership
+COPY --from=builder --chown=nonroot:nonroot /myapp /myapp
+
+# Switch to non-root user
+USER nonroot
+
+# Use exec form for better signal handling
+ENTRYPOINT ["/myapp"]
